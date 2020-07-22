@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>Add or Edit Address Points</title>
+
+  <link rel="stylesheet" href="https://js.arcgis.com/4.9/esri/css/main.css">
+  <link rel="stylesheet" href="//code.jquery.com/ui/1.12.1/themes/base/jquery-ui.css">
+  
+  <script src="https://code.jquery.com/jquery-1.12.4.js"></script>
+  <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.js"></script>
+  <script src="https://js.arcgis.com/4.9/"></script>
+
+  <style>
+    html,
+    body,
+    #viewDiv {
+      padding: 0;
+      margin: 0;
+      height: 100%;
+      width: 100%;
+    }
+
+   .editArea-container {
+      background: #fff;
+      font-family: "Avenir Next W00", "Helvetica Neue", Helvetica, Arial, sans-serif;
+      line-height: 1.5em;
+      overflow: auto;
+      padding: 12px 15px;
+      width: 400px;
+    }
+
+    .edit-button:hover,
+    .edit-button:focus {
+      background-color: #e4e4e4;
+    }
+
+    .inputInfo {
+      font-size: 12px;
+      height: 32px;
+      margin-bottom: 6px;
+      padding: 0 6px;
+      width: 100%;
+    }
+	
+    .list-heading {
+      font-weight: normal;
+      margin-top: 20px;
+      margin-bottom: 10px;
+      color: #323232;
+    }
+
+    .edit-button {
+      font-size: 14px;
+      height: 32px;
+      margin-top: 10px;
+      width: 100%;
+      background-color: transparent;
+      border: 1px solid #0079c1;
+      color: #0079c1;
+    }
+
+    .or-wrap {
+      background-color: #e0e0e0;
+      height: 1px;
+      margin: 2em 0;
+      overflow: visible;
+    }
+
+    .or-text {
+      background: #fff;
+      line-height: 0;
+      padding: 0 1em;
+      position: relative;
+      top: -.75em;
+    }
+
+    input:invalid {
+      border: 1px solid red;
+    }
+
+    input:valid {
+      border: 1px solid green;
+    }
+
+    /* override default style */
+    .esri-feature-form {
+      background: #fff;
+      padding: 0;
+    }
+    /*the container must be positioned relative:*/
+  .autocomplete {
+    position: relative;
+    display: inline-block;
+  }
+
+  input {
+    border: 1px solid transparent;
+    background-color: #f1f1f1;
+    padding: 10px;
+    font-size: 14px;
+  }
+
+  input[type=text] {
+    background-color: #f1f1f1;
+    width: 100%;
+  }
+
+  .autocomplete-items {
+    position: absolute;
+    border: 1px solid #d4d4d4;
+    border-bottom: none;
+    border-top: none;
+    z-index: 99;
+    /*position the autocomplete items to be the same width as the container:*/
+    top: 100%;
+    left: 0;
+    right: 0;
+  }
+
+  .autocomplete-items div {
+    padding: 10px;
+    cursor: pointer;
+    background-color: #fff; 
+    border-bottom: 1px solid #d4d4d4; 
+  }
+
+  /*when hovering an item:*/
+  .autocomplete-items div:hover {
+    background-color: #e9e9e9; 
+  }
+
+  /*when navigating through the items using the arrow keys:*/
+  .autocomplete-active {
+    background-color: DodgerBlue !important; 
+    color: #ffffff; 
+  }
+  </style>
+  
+  <script>
+    require([
+      "esri/Map",
+      "esri/views/MapView",
+      "esri/layers/FeatureLayer",
+      "esri/Graphic",
+      "esri/widgets/Expand",
+      "esri/widgets/FeatureForm",
+      "esri/widgets/BasemapToggle", 
+	  "esri/layers/TileLayer"
+
+	],
+
+    function(
+      Map, MapView, FeatureLayer, Graphic, Expand, FeatureForm, BasemapToggle, TileLayer
+    ) {
+
+      let editFeature, highlight, featureForm, editArea, attributeEditing, updateInstructionDiv;
+
+	const dupLayer = new TileLayer({
+      url: "https://services2.arcgis.com/qzGaVFGfQxn25AYB/arcgis/rest/services/duplicated_party_addresses_tiles/MapServer",
+	  id: "dups"
+    });
+	  
+    const featureLayer = new FeatureLayer({
+		url: "https://services2.arcgis.com/qzGaVFGfQxn25AYB/arcgis/rest/services/party_addresses/FeatureServer/0",
+        outFields: ["*"],
+        popupEnabled: false,
+        id: "party_addresses"
+      });
+
+    var map = new Map({
+        basemap: "streets",
+        layers: [featureLayer]
+      });
+
+	 map.layers.add(dupLayer);
+	 
+
+      // Create the MapView and reference the Map in the instance
+      var view = new MapView({
+        container: "viewDiv",
+        map: map,
+        center: [-104.8509, 39.588917],
+        zoom: 15
+      });
+
+      // 1 - Create the widget
+      var toggle = new BasemapToggle({
+      // 2 - Set properties
+        view: view, // view that provides access to the map's 'topo' basemap
+        nextBasemap: "hybrid" // allows for toggling to the 'hybrid' basemap
+      });
+
+      // Add widget to the top right corner of the view
+      view.ui.add(toggle, "top-left");
+
+		
+      setupEditing();
+
+      // ***********************************************************
+      // Call FeatureLayer.applyEdits() with specified params.
+      // ***********************************************************
+      function applyEdits(params) {
+        unselectFeature();
+        featureLayer.applyEdits(params).then(function(editsResult) {
+          // Get the objectId of the newly added feature.
+          // Call selectFeature function to highlight the new feature.
+          if (editsResult.addFeatureResults.length > 0) {
+            const objectId = editsResult.addFeatureResults[0].objectId;
+            selectFeature(objectId);
+          }
+        })
+        .catch(function(error) {
+          console.log("===============================================");
+          console.error("[ applyEdits ] FAILURE: ", error.code, error.name,
+            error.message);
+          console.log("error = ", error);
+        });
+      }
+
+      // *****************************************************
+      // Check if a user clicked on an incident feature.
+      // *****************************************************
+      view.on("click", function(event) {
+        // clear previous feature selection
+        unselectFeature();
+
+        view.hitTest(event).then(function(response) {
+          // If a user clicks on an incident feature, select the feature.
+          if (response.results[0].graphic && response.results[0].graphic.layer.id == "party_addresses") {
+            selectFeature(response.results[0].graphic.attributes[featureLayer.objectIdField]);
+          }
+        });
+      });
+
+      // *****************************************************
+      // Highlights the clicked incident feature and display
+      // the feature form with the incident's attributes.
+      // *****************************************************
+      function selectFeature(objectId) {
+        // query feature from the server
+        featureLayer.queryFeatures({
+          objectIds: [objectId],
+          outFields: ["*"],
+          returnGeometry: true
+        }).then(function(results) {
+          if (results.features.length > 0) {
+            editFeature = results.features[0];
+
+            // display the attributes of selected feature in the form
+            featureForm.feature = editFeature;
+
+            // highlight the feature on the view
+            view.whenLayerView(editFeature.layer).then(function(layerView){
+              highlight = layerView.highlight(editFeature);
+            });
+
+            attributeEditing.style.display = "block";
+            updateInstructionDiv.style.display = "none";
+          }
+        });
+      }
+
+      // *****************************************************
+      // Remove the feature highlight and remove attributes
+      // from the feature form.
+      // *****************************************************
+      function unselectFeature() {
+        attributeEditing.style.display = "none";
+        updateInstructionDiv.style.display = "block";
+        featureForm.feature = null;
+        if (highlight){
+          highlight.remove();
+        }
+      }
+
+      // *****************************************************
+      // Set up editing.
+      // *****************************************************
+      function setupEditing() {
+        // input boxes for the attribute editing
+        editArea = document.getElementById("editArea");
+        updateInstructionDiv = document.getElementById("updateInstructionDiv");
+        attributeEditing = document.getElementById("featureUpdateDiv");
+
+        // Create a new feature form and set its layer to
+        // 'party_addresses' featureLayer. Feature form displays
+        // attributes of the fields specified in fieldConfig.
+        featureForm = new FeatureForm({
+          container: "formDiv",
+          layer: featureLayer,
+          fieldConfig: [
+		  {
+              name: "fulladdr",
+              options: {
+              label: "Full Address"
+              }
+            },
+			{
+              name: "addrnum",
+              options: {
+              label: "Street Address Number"
+              }
+            },
+            {
+              name: "preaddrnum",
+              options: {
+              label: "Address Prefix"
+              }
+            },
+            {
+              name: "street_name",
+              options: {
+              label: "Street Name"
+              }
+            },
+            {
+              name: "street_type",
+              options: {
+              label: "Street Type"
+              }
+            },
+			{
+              name: "unitid",
+              options: {
+              label: "Unit ID"
+              }
+            },
+			{
+              name: "zip_code",
+              options: {
+              label: 'Zip Code'  
+            }
+            }
+          ]
+        });
+
+        // Listen to the feature form's submit event.
+        featureForm.on("submit", function(){
+      
+          console.log(editFeature.attributes)
+          if (editFeature) {
+            // Grab updated attributes from the form.
+            var updated = featureForm.getValues();
+
+
+			Object.keys(updated).forEach(function(name) {
+              editFeature.attributes[name] = updated[name];
+
+
+			      editFeature.attributes["unique_id"] = Object.values(updated)[11].replace(/\s/g, "");
+            //editFeature.attributes["street_name"] = document.getElementById('tags').value
+            editFeature.attributes["street_name"] = street_name
+      
+            });
+
+            // Setup the applyEdits parameter with updates.
+            const edits = {
+              updateFeatures: [editFeature]
+            };
+			
+            applyEdits(edits);
+          }
+        });
+
+        // Expand widget for the editArea div.
+        const editExpand = new Expand({
+          expandIconClass: "esri-icon-edit",
+          expandTooltip: "Expand Edit",
+          expanded: true,
+          content: editArea
+        });
+
+        view.ui.add(editExpand, "top-right");
+
+        // *****************************************************
+        // Update attributes of the selected feature.
+        // *****************************************************
+        document.getElementById("btnUpdate").onclick = function() {
+          // Fires feature form's submit event.
+          featureForm.submit();
+        }
+        // *****************************************************
+        // Create a new feature at the click location.
+        // *****************************************************
+        document.getElementById("btnAddFeature").onclick = function () {
+          unselectFeature();
+
+		  const handler = view.on("click", function(event) {
+            handler.remove();
+            event.stopPropagation();
+
+            if (event.mapPoint) {
+              point = event.mapPoint.clone();
+              point.z = undefined;
+			        point.hasZ = false;
+			        var lat = event.mapPoint.latitude;
+			        var lon = event.mapPoint.longitude;
+
+              // Create a new feature with incident type.
+              editFeature = new Graphic({
+                geometry: point,
+                attributes: {
+				        "x": lat,
+                "y": lon
+                }
+              });
+
+              // Setup the applyEdits parameter with adds.
+              const edits = {
+                addFeatures: [editFeature]
+              };
+              applyEdits(edits);
+              document.getElementById("viewDiv").style.cursor = "auto";
+            } else {
+              console.error("event.mapPoint is not defined");
+            }
+          });
+
+          // Change the view's mouse cursor once user selects
+          // a new incident type to create.
+          document.getElementById("viewDiv").style.cursor = "crosshair";
+          editArea.style.cursor = "auto";
+        }
+
+        // *****************************************************
+        // Delete button click event. ApplyEdits is called
+        // with the selected feature to be deleted.
+        // *****************************************************
+        document.getElementById("btnDelete").onclick = function() {
+          // setup the applyEdits parameter with deletes.
+          const edits = {
+            deleteFeatures: [editFeature]
+          };
+          applyEdits(edits);
+        }
+      }
+    });
+</script>
+</head>
+
+<body>
+  <div id="editArea" class="editArea-container">
+    <div id="addFeatureDiv">
+      <h3 class="list-heading">Add Address</h3>
+      <ul style="font-size: 13px; padding-left: 1.5em;">
+        <li>Click Add Address button</li>
+        <li>Click on the map to create the Address</li>
+      </ul>
+      <form autocomplete="off" action="/action_page.php">
+        <div class="autocomplete" style="width:370px; padding: 10px 0px 15px 0px">
+          <input id="myInput" type="text" placeholder="Type Full Address">
+        </div>
+      </form>
+      <form>
+        <input type="radio" name="gender" value="Utilty" checked> Utility<br>
+      </form>
+      <input type="button" class="edit-button" value="Add Address" id="btnAddFeature">
+    </div>
+
+    <div id="updateInstructionDiv" style="text-align:center">
+		<p class="or-wrap">
+        <span class="or-text">Or</span>
+		</p>
+		<p>Select an Address to edit or delete.</p>
+    </div>
+
+    <div id="featureUpdateDiv" style="display:none; margin-top: 1em;">
+        
+    <h3 class="list-heading">Check the Address Information Below</h3>
+    
+    <div id="attributeArea">
+    <div id="formDiv"></div>
+        <input type="button" class="edit-button" value="Update Address"
+          id="btnUpdate">
+		</div>
+
+      <div id="deleteArea">
+        <input type="button" class="edit-button" value="Delete Address" id="btnDelete">
+      </div>
+    </div>
+  </div>
+  <div id="viewDiv"></div>
+  
+  <script>
+  function autocomplete(inp, arr) {
+    /*the autocomplete function takes two arguments,
+    the text field element and an array of possible autocompleted values:*/
+    var currentFocus;
+    /*execute a function when someone writes in the text field:*/
+    
+    
+    inp.addEventListener("input", function(e) {
+        var a, b, i, val = this.value;
+        console.log(a,b,i, val)
+        street_name_input = ''
+        address_number = ''
+        
+        if (val.includes(' ') == false) {
+          
+          // if input is only numeric, set street_name_input to ''
+          if (val.match(/[a-z]/i) == null) {
+          address_number = val
+          street_name_input = ''
+          }
+
+          // if there are alpha characters than set street_name_input to the val
+          else {
+          address_number = ''
+          street_name_input = val
+          }
+        }
+
+        if (val.includes(' ')) {
+           // console.log('input has spaces')
+            
+            // if the first part of the string is a number
+            if (Number(val.split(" ")[0]) > 0) {
+                address_number = val.split(" ")[0]
+                street_name_input =  val.split(" ").slice(1).join(" ")
+              }
+            
+            else {
+              street_name_input =  val
+            }
+        }
+   
+        /*close any already open lists of autocompleted values*/
+        closeAllLists();
+        if (!street_name_input) { return false;}
+        currentFocus = -1;
+
+        /*create a DIV element that will contain the items (values):*/
+        
+        a = document.createElement("DIV");
+        // a is an object that drops down
+        console.log(a)
+        a.setAttribute("id", this.id + "autocomplete-list");
+        a.setAttribute("class", "autocomplete-items");
+        /*append the DIV element as a child of the autocomplete container:*/
+        this.parentNode.appendChild(a);
+        
+        /*for each item in the array...*/
+        for (i = 0; i < arr.length; i++) {
+          
+          /*check if the item starts with the same letters as the text field value:*/
+          if (arr[i].substr(0, street_name_input.length).toUpperCase() == street_name_input.toUpperCase()) {
+            
+            /*create a DIV element for each matching element:*/
+            b = document.createElement("DIV");
+            b.innerHTML = address_number + ' '
+            
+            /*make the matching letters bold:*/
+		        b.innerHTML += "<strong>" + arr[i].substr(0, street_name_input.length) + "</strong>";
+            b.innerHTML += arr[i].substr(street_name_input.length);
+           
+            /*insert a input field that will hold the current array item's value:*/
+            b.innerHTML += "<input type='hidden' value='" + address_number.replace(' ','') + ' ' + arr[i] + "'>";
+            
+            b.addEventListener("click", function(e) {
+                
+                /*insert the value for the autocomplete text field:*/
+                inp.value = this.getElementsByTagName("input")[0].value;
+                
+                /*close the list of autocompleted values,
+                (or any other open lists of autocompleted values:*/
+              closeAllLists();
+            });
+            
+            a.appendChild(b);
+          }
+
+        else if (arr[i].substr(2, street_name_input.length).toUpperCase() == street_name_input.toUpperCase()) {
+            
+            /*create a DIV element for each matching element:*/
+            b = document.createElement("DIV");
+            b.innerHTML = address_number + ' '
+            
+            /*make the matching letters bold:*/
+            b.innerHTML += arr[i].substr(0, 2);
+		        b.innerHTML += "<strong>" + arr[i].substr(2, street_name_input.length) + "</strong>";
+            b.innerHTML += arr[i].substr(street_name_input.length + 2,);
+
+            /*insert a input field that will hold the current array item's value:*/
+            b.innerHTML += "<input type='hidden' value='" + address_number.replace(' ','') + ' ' +  arr[i] + "'>";
+
+            b.addEventListener("click", function(e) {
+                
+                /*insert the value for the autocomplete text field:*/
+                inp.value = this.getElementsByTagName("input")[0].value;
+
+                /*close the list of autocompleted values,
+                (or any other open lists of autocompleted values:*/
+                closeAllLists();
+            });
+            
+            a.appendChild(b);
+          }
+        }
+    });
+
+    /*execute a function presses a key on the keyboard:*/
+    inp.addEventListener("keydown", function(e) {
+        var x = document.getElementById(this.id + "autocomplete-list");
+        if (x) x = x.getElementsByTagName("div");
+        if (e.keyCode == 40) {
+          /*If the arrow DOWN key is pressed,
+          increase the currentFocus variable:*/
+          currentFocus++;
+          /*and and make the current item more visible:*/
+          addActive(x);
+        } else if (e.keyCode == 38) { //up
+          /*If the arrow UP key is pressed,
+          decrease the currentFocus variable:*/
+          currentFocus--;
+          /*and and make the current item more visible:*/
+          addActive(x);
+        } else if (e.keyCode == 13) {
+          /*If the ENTER key is pressed, prevent the form from being submitted,*/
+          e.preventDefault();
+          if (currentFocus > -1) {
+            /*and simulate a click on the "active" item:*/
+            if (x) x[currentFocus].click();
+          }
+        }
+    });
+    function addActive(x) {
+      /*a function to classify an item as "active":*/
+      if (!x) return false;
+      /*start by removing the "active" class on all items:*/
+      removeActive(x);
+      if (currentFocus >= x.length) currentFocus = 0;
+      if (currentFocus < 0) currentFocus = (x.length - 1);
+      /*add class "autocomplete-active":*/
+      x[currentFocus].classList.add("autocomplete-active");
+    }
+    function removeActive(x) {
+      /*a function to remove the "active" class from all autocomplete items:*/
+      for (var i = 0; i < x.length; i++) {
+        x[i].classList.remove("autocomplete-active");
+      }
+    }
+    function closeAllLists(elmnt) {
+      /*close all autocomplete lists in the document,
+      except the one passed as an argument:*/
+      var x = document.getElementsByClassName("autocomplete-items");
+      for (var i = 0; i < x.length; i++) {
+        if (elmnt != x[i] && elmnt != inp) {
+          x[i].parentNode.removeChild(x[i]);
+        }
+      }
+    }
+    /*execute a function when someone clicks in the document:*/
+    document.addEventListener("click", function (e) {
+        closeAllLists(e.target);
+    });
+  }
+  
+  /*An array containing all the country names in the world:*/
+  var street_names = ['S RIFLE ST', 'S ROSLYN CT', 'E HINSDALE PL', 'E HINSDALE DR', 'E ORCHARD PL', '', 'S ROSEWOOD DR', 'S FLANDERS WAY', 'E CIMMARRON PL', 'S JOLIET ST', 
+  'E JAMISON CIR S', 'S RACE CT', 'E ABERDEEN PL', 'S MALTA ST', 'S PONTIAC CT', 'S ADAMS CT', 'S KENTON ST', 'S OURAY CT', 'S BIRCH WAY', 'S QUINCE CIR', 'E POWERS CIR', 
+  'E MINERAL CIR', 'S FOREST WAY', 'S UNIVERSITY  BLVD', 'S PITKIN ST', 'S DEXTER CT', 'S MONACO ST', 'S VINE CIR', 'E HINSDALE LN', 'E DAVIS AVE', 'E MINERAL PL', 
+  'S ESPANA WAY', 'CALEY PL', 'S EUCLID', 'S MONACO CIR W', 'S ENSENADA ST', 'S GIBRALTAR ST', 'E HIALEAH DR', 'E PHILLIPS PL', 'S JASPER ST', 'S NUCLA ST', 'E DORADO CT', 
+  'E POWERS PL', 'E ORCHARD RD', 'E BIG DRY CREEK DR', 'S WABASH CT', 'S YAMPA CT', 'S CEYLON WAY', 'E POWERS DR', 'S KIRK CT', 'S ABILENE ST', 'S BIRCH CT', 
+  'S GRAPE ST', 'S AKRON  CT', 'S WELLINGTON CT', 'S OGDEN ST', 'S WILLIAMS WAY', 'E NOBLE PL', 'E POWERS CIR N', 'S POPLAR WAY E', 'S DUNKIRK ST', 'S WHEELING CT', 
+  'S KEARNEY CT', 'E HIALEAH AVE', 'E PRENTICE CIR', 'S WACO ST', 'S GARFIELD CT', 'S LOCUST WAY', 'E PHILLIPS AVE', 'E APPLEWOOD AVE', 'E IDA AVE', 'E PRENTICE AVE', 
+  'S NEPAL CT', 'S FLAMINGO CT', 'S WALDEN CIR', 'E NICHOLS CIR', 'S ALBION CT', 'S OLIVE CT', 'E COUNTY LINE RD', 'S FRASER ST', 'S MALAYA CT', 'S LEYDEN CT', 'E PROGRESS CIR N', 
+  'S CEYLON CT', 'E BELLEWOOD PL', 'S RACE ST', 'S HARRISON ST', 'S FAIRPLAY ST', 'S PENNSYLVANIA ST', 'S DAHLIA CT', 'S WILLOW CIR', 'S GIBRALTAR LN', 'E PEAKVIEW AVE', 
+  'S GLENCOE WAY', 'S OLIVE CIR', 'E EUCLID PL', 'E IRISH LN', 'E GEDDES LN', 'S LAKE DR', 'E FAIR CT', 'S TAMARAC CT', 'S JERICHO ST', 'E QUINCY PL', 'E FAIR PL', 'S NEWPORT ST', 
+  'S KIRK CIR', 'S BAHAMA CIR', 'S FRANKLIN CT', 'S POTOMAC WAY', 'ORCHARD LN', 'S MOBILE ST', 'S YAMPA CIR', 'S CEYLON ST', 'S HALIFAX ST', 'S LINCOLN WAY', 'E MAPLEWOOD ST', 
+  'S PITKIN CT', 'E RED FOX LN', 'E IRWIN PL', 'E LONGVIEW AVE', 'S XANTHIA PL', 'E GEDDES PL', 'S LAFAYETTE CT', 'S ST PAUL ST', 'E EASTER DR', 'S KIT CARSON CIR E', 'S ZENO CT', 
+  'S CATHAY WAY', 'S BRIDGER CT', 'S LIMA ST', 'S QUINTERO CIR', 'E FREMONT DR', 'S KIT CARSON DR', 'E WILLIAMETTE PL', 'S IVANHOE CIR', 'E IRWIN LN', 'S ROSEWOOD CIR', 'E EASTER CIR',
+  'S JERICHO CT', 'S JOPLIN WAY', 'S GAYLORD CIR', 'S DANUBE CT', 'E HINSDALE CIR', 'S CHERRY CT', 'S URAVAN ST', 'S CORONA WAY', 'S FAIRFAX WAY', 'E CALEY LN', 'S SEDALIA ST', 
+  'S KNOLLS WAY', 'E PRENTICE PL', 'S MADISON CT', 'S TELLURIDE ST', 'S MARION CIR W', 'S LINCOLN ST', 'E PHILLIPS LN', 'E PRENTICE LN', 'S STEELE ST', 'E FAIR LN', 'E OTERO DR',
+  'S FLANDERS ST', 'E COSTILLA BLVD', 'S EUDORA ST', 'S MONACO CIR E', 'S ROSLYN WAY', 'S ONEIDA CIR', 'E DORADO CIR', 'S LOCUST ST', 'E FREMONT CT', 
+  'S GRAPE WAY', 'S KITTREDGE LN', 'S FAIRFAX CT', 'E SARATOGA AVE', 'E NICHOLS AVE', 'S FILBERT CT', 'S ODESSA ST', 'S EUDORA CIR', 'E DRY CREEK RD', 'E COTTONWOOD AVE', 'S YAMPA ST',
+  'S SPRUCE CIR', 'S PARIS ST', 'S BUCKLEY RD', 'S TELLURIDE WAY', 'E SMOKY HILL  RD', 'DRY CREEK RD', 'S ADAMS DR', 'GREENWOOD PL BLVD', 'S GARFIELD WAY', 'S ADAMS CIR', 
+  'E CRESTLINE LN', 'E LAKE AVE', 'S KRAMERIA ST', 'E DAVIES CT', 'S TELLURIDE CT', 'E FAIR  PL', 'S RIVIERA WAY', 'E FREMONT AVE', 'S QUINCE CT', 'E PHILLIPS CIR', 
+  'S JACKSON CT', 'E BERRY PL', 'E CRESTRIDGE PL', 'S YORK CT', 'S POPLAR WAY', 'S TUCSON WAY', 'S DOWNING CIR E', 'S TEMPE WAY', 'S COOK CT', 'S AKRON ST', 'S EMERSON WAY', 'S ROME ST', 
+  'S HIMALAYA WY', 'S EUDORA WAY', 'E IDA PL', 'S DANUBE WAY', 'E WILLIAMETTE LN', 'S GRANT ST', 'E ORCHARD LN', 'E HERITAGE PL S', 'E CRESTHILL AVE', 'S STEELE CT', 'E PHILLPS DR', 
+  'E SUNSET CIR', 'S ST PAUL WAY', 'E OTERO PL', 'S JASMINE CT', 'S QUEMOY WAY', 'S EMERSON CIR', 'E FAIR AVE', 'E ARAPAHOE PL', 'E BELLEWOOD LN', 
+  'E DRY CREEK PL', 'S CHERRYWOOD CIR', 'S PAGOSA WAY', 'E GARDEN DR', 'S STEELE CIR', 'S MONACO CT', 'S BLACKHAWK ST', 'S NETHERLAND CT', 'S POPLAR LN', 'S JERICHO WAY', 'S EVANSTON WAY', 
+  'S IDALIA ST', 'S MARION CIR', 'S LAFAYETTE CIR W', 'S BELLAIRE CIR', 'S VENTURA WAY', 'E FREMONT CIR S', 'E EASTER LN', 'S GILPIN CT', 'S FILLMORE CIR', 'S TRUCKEE CT', 
+  'S IVY ST', 'S NIAGARA CT', 'S JERICHO CIR', 'S MARION CIR S', 'E LAKE DR', 'E DAVIES DR', 'E CALEY DR', 'S VERBENA WAY', 'E BRIARWOOD CIR S', 'S WALDEN CT', 'S PEARL ST', 'S DUNKIRK WAY',
+   'S GLENCOE CT', 'E MAPLEWOOD PL', 'S ESPANA ST', 'E IRISH PL', 'S VINE WAY', 'E MINERAL DR', 'S FUNDY ST', 'E DAVIES CIR', 'S SPRUCE CT', 'E EUCLID DR', 'S JASMINE ST', 'S PEORIA ST', 
+   'E CRESTLINE CIR', 'S GENOA ST', 'S SALIDA ST', 'S IRELAND CIR', 'S COOK CIR', 'S WILLIAMS CIR', 'S ULSTER CT', 'S SEDALIA CT', 'E GEDDES CT', 'S WORCHESTER ST', 'E IDA DR', 'E FOXHILL PL', 
+   'S QUEMOY CT', 'S MARION CIR E', 'E WAGONTRAIL DR', 'S EUDORA CT', 'S BILLINGS WAY', 'S JERSEY CT', 'E RADCLIFF PL', 'E GEDDES CIR S', 'CRABTREE DR', 'S COOK WAY', 'S GAYLORD ST', 
+   'E APPLETON CIR', 'E TUFTS DR', 'S DAYTON ST', 'S HUDSON CT', 'E PINEWOOD AVE', 'S WILLOW ST', 'S CHERRY WAY', 'S ANDES ST', 'S JEBEL CT', 'S ELM ST', 'S MAGNOLIA CIR', 'S BLACKHAWK CT', 
+   'S POTOMAC ST', 'S REVERE PKWY', 'S KILLARNEY ST', 'E NICHOLS PL', 'E MAPLEWOOD CT', 'E BELLEVIEW DR', 'S TRAILS EDGE WY', 'S ELIZABETH CIR', 'S MARION ST', 'E EUCLID CIR', 'S MALTA WAY', 
+   'S IRELAND CT', 'S MALAYA WAY', 'E LONG LN', 'S ONEIDA WAY', 'S IRELAND WAY', 'E BELLEWOOD DR', 'S PARKER RD', 'S POPLAR ST', 'S CLAYTON ST', 'S HUDSON ST', 'S RIFLE CT', 'S ARGONNE ST', 
+   'S PAGOSA CT', 'E BRIARWOOD PL', 'S QUINTERO WAY', 'S NEWPORT WAY', 'S KEARNEY CIR', 'E MAPLEWOOD DR', 'S JASMINE CIR', 'E PROGRESS LN', 'E COSTILLA WAY', 'S HIMALAYA ST', 'S HOLLY CIR', 
+   'S RIVIERA CT', 'S SHAWNEE ST', 'S WASHINGTON WAY', 'S CLERMONT DR', 'E EUCLID AVE', 'S ASH CIR W', 'S LOCUST PL', 'E LONG  AVE', 'S GRAPE LN', 'S ADAMS WAY', 'S HUDSON CIR', 'S DOWNING CIR S', 
+   'S PINEY CREEK CIR', 'S TROY CT', 'E MAPLEWOOD LN', 'S QUATAR ST', 'S LAFAYETTE CIR E', 'E CRESTRIDGE DR', 'E JAMISON PL', 'S CHESTER ST', 'S WALDEN ST', 'S ULSTER CIR', 'S TOWER RD', 
+   'S LAFAYETTE ST', 'E ALAMO LN', 'E PRENTICE DR', 'S ALTON CT', 'S CORONA CT', 'S LAREDO CT', 'E BRIARWOOD CIR', 'S FILBERT LN', 'S LOGAN PL', 'S DEXTER ST', 'S LEWISTON CT', 
+   'E LAKE CIR N', 'S QUATAR CIR', 'E FAIR DR', 'E ALAMO DR', 'E UNION DR', 'S HAVANA ST', 'E OAKWOOD CT', 'S FILLMORE WAY', 'S IDALIA CT', 'S TRENTON DR', 'party  ST', 'S RACE CIR E', 
+   'S SYRACUSE WAY', 'S SHERMAN WAY', 'E PROGRESS AVE', 'S RICHFIELD CT', 'E DAVIES PL', 'E JAMISON CIR', 'S TRENTON CIR', 'E CRESTRIDGE AVE', 'E CHENANGO DR', 'E DRY CREEK CIR', 'S OLATHE ST', 
+   'S URAVAN CT', 'E MINERAL AVE', 'E CALEY PL', 'E NOBLES RD', 'S COOK ST', 'S SALIDA CT', 'S MOBILE CT', 'E PEAKVIEW ST', 'E LAKE CIR', 'S FOREST CT', 'E BRITTANY PL', 'S CARSON ST', 'S MILWAUKEE CT', 
+   'E GEDDES DR', 'S ELKHART CT', 'S VINE CIR W', 'E BRONCOS PKWY', 'S UVALDA ST', 'S HARRISON DR', 'S MADISON DR', 'E IDA CIR', 'S DETROIT ST', 'S GIBRALTAR WAY', 'S KILLARNEY DR', 'S ROME CT', 
+   'S ADAMS ST', 'S SPRUCE DR E', 'S ASH WAY', 'S WILLOW CT', 'S HOMESTEAD PKWY', 'S RESERVOIR RD', 'S JORDAN RD', 'S JASMINE WAY', 'S COLUMBINE WAY', 'S DEXTER WAY', 'E WEAVER PL', 'S DANUBE ST', 
+   'E COMMONS AVE', 'S COVE CIR', 'E POWERS CIR S', 'S ORLEANS ST', 'S HIMALAYA CT', 'S NOME ST', 'S NETHERLAND CIR', 'S ULSTER ST', 'E PEAKVIEW CIR', 'E CARLSON DR', 'S OLATHE CT', 'S QUATAR CT', 
+   'S ULSTER PL', 'S CLAYTON CIR', 'S FRANKLIN WAY', 'E CRESTRIDGE CIR', 'S VINE ST', 'S GLENCOE LN', 'S ELIZABETH CT', 'S HERITAGE PL E', 'E KETTLE CT', 'E OAKWOOD AVE', 'S LIVERPOOL WAY', 
+   'S QUEBEC CT', 'S S HIMALAYA CT', 'S DOWNING CIR W', 'S OLATHE CIR', 'S VALENTIA WAY', 'S JERSEY WAY', 'S DOWNING ST', 'S SYRACUSE ST', 'E FREMONT PL', 'S ALTON WAY', 'E FREMONT CIR',
+    'S JACKSON CIR', 'E BRONCOS PL', 'S WABASH ST', 'S WASHINGTON ST', 'E LOW PL', 'E LONG CIR N', 'S ODESSA CIR', 'S GENOA CIR', 'E RADCLIFF AVE', 'S NETHERLAND WAY', 'S CLAYTON WAY', 
+    'E BELLEVIEW LN', 'E APPLETON CT', 'S QUEMOY CIR', 'S ARGONNE CT', 'S PAGOSA ST', 'S QUEBEC ST', 'S KILLARNEY CT', 'S SICILY WAY', 'E GEDDES AVE', 'S LISBON LN', 'S GIBRALTAR CT', 'S LISBON WAY', 
+    'S VALENTIA ST', 'E CRESTLINE AVE', 'E EASTER CT', 'E WAGONTRAIL LN', 'S IVY WAY', 'S OLATHE WAY', 'S ASH CIR', 'S FLANDERS LN', 'E PEAKVIEW PL', 'E LAKE LN', 'S VINE CT', 'E BRIARWOOD BLVD', 
+    'S KITTREDGE ST', 'S LISBON ST', 'S MEMPHIS WAY', 'S BISCAY CIR', 'S IVY CT', 'S KIT CARSON CIR W', 'S JACKSON WAY', 'E PANORAMA DR', 'S GIBRALTAR CIR', 'S KIRK ST', 'S NIAGARA ST',
+     'S CHAPPARAL CIR E', 'S EMERSON ST', 'S MONROE CT', 'E OTERO LN', 'S ELIZABETH WAY', 'S OGDEN CT', 'S DAHLIA ST', 'E STERNE BLVD', 'E OTERO CIR', 'S NUCLA CT', 'S MARION CT', 
+     'S XANTHIA CT', 'S VINCENNES WAY', 'S LIVERPOOL ST', 'S FRANKLIN ST', 'S KILLARNEY WAY', 'E JAMISON CIR N', 'S URAVAN PL', 'S YOSEMITE ST', 'E EASTER AVE', 'E JAMISON LN', 
+     'E COSTILLA CIR', 'S GAYLORD CT', 'E ARAPAHOE  RD', 'E WEAVER DR', 'S NIAGARA WAY', 'S ROSEMARY WAY', 'S HUDSON WAY', 'S FAIRFAX ST', 'E PINEWOOD CIR', 'S NOME CT', 'S HANNIBAL WAY',
+     'S NEPAL WAY', 'S XANTHIA ST', 'S ELM CT', 'E GARDEN PL', 'S PICADILLY ST', 'E WEAVER LN', 'E DAVIES AVE', 'S HIGH ST', 'S UNIVERSITY BLVD', 'E PROGRESS CIR', 'S UNIVERSITY WAY', 
+     'S PENROSE CT', 'S ORLEANS WAY', 'E PROGRESS PL', 'S QUINCE WAY', 'S EAGLE ST', 'E DOGWOOD AVE', 'S RICHFIELD ST', 'S HERITAGE PL W', 'S HIGH CT', 'E LONG CT', 
+     'S TRENTON ST', 'E JAMISON AVE', 'S ENSENADA CT', 'S CLERMONT ST', 'S YORK ST', 'S ENSENADA WAY', 'E FAIR CIR', 'E BERRY AVE', 'S CLARKSON ST', 'S GLENCOE CIR', 'S IRELAND ST', 'S SYRACUSE CT', 
+     'S BELLAIRE WAY', 'E SMOKY HILL RD', 'S TEMPE CIR', 'E DORADO AVE', 'S ATCHISON WAY', 'S FULTON ST', 'S LAREDO WAY', 'E GRAVES AVE', 'E CRESTLINE DR', 'S BROADWAY', 'S KEARNEY ST', 'E MAPLEWOOD WAY', 
+      'S HUMBOLDT RD', 'E ARAPAHOE CT', 'S TRAILS EDGE CT', 'E VALLEYVIEW AVE', 'S FILLMORE CT', 'E EASTER CIR S', 'S OGDEN WAY', 'S HANNIBAL CT', 'S GLENCOE ST', 'E WEAVER AVE', 
+      'E BERRY DR', 'S CHERRY DR', 'S HALIFAX CIR', 'S ESPANA LN', 'S FUNDY CIR', 'E LONGVIEW PL', 'S KALISPELL CT', 'S CATHAY ST', 'S DETROIT CIR', 'fgh fgh fgh', 'S JASPER WAY', 'S IVANHOE WAY', 
+      'S HELENA CT', 'S WILLIAMS CIR W', 'E HINSDALE AVE', 'S GILPIN ST', 'E TUFTS CIR', 'S VINE CIR E', 'E WEAVER CIR', 'E LONG PL', 'E HIGHLINE CIR', 'S XENIA PL', 'S JASPER CT', 'S SHERMAN ST', 
+      'E CALEY CIR', 'E KETTLE PL', 'E LAKE CT', 'S WACO CT', 'E KETTLE AVE', 'E LINKS DR', 'S ESPANA CIR', 'S CHERRY CIR', 'S XENIA CIR', 'S HIMALAYA WAY', 'S RACE WAY', 'S KIT CARSON ST',
+       'S NIAGARA CIR', 'S FUNDY CT', 'S NEPAL ST', 'S HUMBOLDT ST', 'GREENWOOD PLAZA BLVD', 'S DAWSON CIR', 'S MONACO CIR', 'S FLANDERS CT', 'E FREMONT CIR N', 'E GEDDES CIR N', 'S CLARKSON CIR', 
+       'S BISCAY CT', 'VILLAGE LN', 'S WASHINGTON CIR', 'S QUINCE ST', 'S IVANHOE CT', 'S EMERSON CT', 'S QUINTERO ST', 'S MARION WAY', 'E CRESTLINE PL', 'S ASH CT', 'S GRANT DR', 'S HARRISON WAY', 
+       'E STANFORD AVE', 'S WILLIAMS CT', 'S UINTA CT', 'S HUMBOLDT CT', 'E LAKE WAY', 'S LOGAN ST', 'E HUNTERS HILL DR', 'S CHERRY ST', 'S QUENTIN ST', 'S KRAMERIA CT', 'S GILPIN CIR E', 
+       'S MAGNOLIA CT', 'S TRENTON WAY', 'S SPRUCE ST', 'S DUNKIRK CT', 'S GENOA WAY', 'S WILLIAMS ST', 'E PANAMA DR', 'S BIRCH ST', 'S PONTIAC ST', 'S COLUMBINE ST', 'S FRANKLIN CIR', 'S IVANHOE ST',
+        'S HUMBOLDT PL', 'E ABERDEEN DR', 'S DAHLIA CIR', 'S JEBEL WAY', 'E PEAKVIEW CT', 'S VENTURA CT', 'S ANDES CT', 'S ROSEMARY CT', 'S GENOA CT', 'S ROSLYN CIR', 'S GILPIN CIR S', 'E LINKS CIR', 
+        'S MARION PL', 'S PERTH PL', 'S LEYDEN ST', 'E PROGRESS CIR S', 'E OTERO AVE', 'S COLORADO CT', 'E MAPLEWOOD AVE', 'E LAKE CIR S', 'E PANORAMA CIR', 'S ABILENE WAY', 'S WILLOW WAY', 
+        'S LISBON CT', 'E PROGRESS DR', 'S UINTA PL', 'S CLARKSON CT', 'S WELLINGTON ST', 'S FOREST ST', 'S ONEIDA CT', 'S MAGNOLIA WAY', 'E MINERAL LN', 'S LOGAN CT', 'S MILWAUKEE WAY', 
+        'E IKEA WAY', 'E JAMISON DR', 'E WAGONTRAIL PL', 'S RICHFIELD WAY', 'E LONG AVE', 'S CLERMONT CT', 'S PERTH WAY', 'S FOREST LN', 'S ALBION ST', 'S NETHERLAND ST', 'S LOCUST CIR', 
+        'S ONIEDA WAY', 'E HINSDALE CT', 'S TRENTON CT', 'S GRANT CT', 'S XENIA CT', 'E ABERDEEN AVE', 'S LAFAYETTE WAY', 'E EASTER CIR N', 'S UINTA ST', 'E DORADO DR', 'S JACKSON ST', 
+        'E EASTER WAY', 'E COSTILLA DR', 'S JEBEL ST', 'S ZENO ST', 'E KETTLE CIR', 'S LEWISTON WAY', 'S OLIVE WAY', 'E LAKE  DR', 'S CLAYTON CT', 'S POPLAR CT', '6480 HIMALAYA CT S', 'S LOCUST CT', 
+        'E LINKS PKWY', 'S MADISON CIR', 'S COLORADO BLVD', 'S XANADU WAY', 'S ROSEMARY CIR', 'S ANDES PL', 'S MALAYA ST', 'E BRIARWOOD DR', 'E STANFORD DR', 'E PHILLIPS DR', 'S ELIZABETH ST', 
+        'S VERBENA CIR', 'S MADISON WAY', 'S GALENA ST', 'S KRAMERIA WAY', 'E BRIARWOOD AVE', 'E HERITAGE PL N', 'S RACE CIR W', 'E NICHOLS DR', 'S HARRISON CT', 'E MONMOUTH PL', 'S GAYLORD WAY', 
+        'E BRIARWOOD CIR N', 'S HARRISON CIR', 'E COSTILLA PL', 'E LONG CIR S', 'S POTOMAC CT', 'S XANADU ST', 'E DORADO PL', 'E COSTILLA AVE', 'S ASH CIR E', 'S OLATHE LN', 'S COLUMBINE CT', 
+        'E GOORMAN AVE', 'S NEWPORT CT', 'E OAKWOOD DR', 'S MONROE DR', 'E LONG CIR', 'S LAFAYETTE PL', 'S DETROIT CT', 'S ELM CIR', 'E ORCHARD DR', 'S GILPIN CIR W', 'S BROOK VALLEY WAY', 
+        'S PONTIAC WAY', 'S OURAY ST', 'S PERTH ST', 'E BENTLEY CIR', 'VAUGHN ST', 'E POWERS LN', 'E POWERS AVE', 'S GRAPE CT', 'S IDALIA WAY', 'S ANDES CIR', 'S GARFIELD DR', 'E BERRY LN', 
+        'S MONROE WAY', 'S LAREDO ST', 'S BIRCH CIR', 'E ALAMO PL', 'S HUMBOLDT CIR', 'S HELENA ST', 'E NICHOLS LN', 'S CATHAY CT', 'S LEE CT', 'E EASTER PL', 'S CHAPPARAL CIR W', 'S HOLLY ST', 
+        'S EMPORIA ST', 'S ALBION WAY', 'S AKRON CT', 'S SOUTHWOOD DR', 'S CLINTON ST', 'S BISCAY ST', 'S TROY CIR', 'S TAMARAC ST', 'E LAKE PL', 'S OLIVE ST', 'S ARAPAHOE RD', 'S HUDSON LN', 
+        'S SPRUCE DR W', 'E GEDDES CIR', 'S MONACO WAY', 'S BAHAMA CT', 'S COOK DR', 'S LEWISTON ST', 'S RACINE CIR', 'S KALISPELL ST', 'S XANTHIA WAY', 'GARFIELD CT', 'S QUINTERO CT', 
+        'S MEMPHIS CT', 'S VALLEY HWY', 'S TRUCKEE ST', 'E ARAPAHOE RD', 'E BELLEVIEW PL', 'S GARFIELD ST', 'S YOSEMITE CT', 'S ESPANA CT', 'E PINEWOOD PL', 'S JOSEPHINE WAY', 'S ZENO WAY', 'S KITTREDGE CT',
+         'S WILLIAMS CIR E', 'E CALEY AVE', 'E NICHOLS CT'];
+  
+  /*initiate the autocomplete function on the "myInput" element, and pass along the street_name array as possible autocomplete values:*/
+   autocomplete(document.getElementById("myInput"), street_names);
+  </script>
+</body>
+</html>
